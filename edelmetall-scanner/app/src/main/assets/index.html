@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edelmetall-Scanner</title>
+<style>
+  :root { --bg:#f6f5f2; --card:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#e3e1db; --gold:#b8860b; --silver:#6e7b87; --pos:#1f7a3a; --neg:#b3261e; --accent:#1d4ed8; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141413; --card:#1f1f1d; --ink:#efeee9; --muted:#9d9c95; --line:#34332f; --gold:#e0b440; --silver:#a9b6c2; --pos:#5fce80; --neg:#ff8a80; --accent:#8ab4ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:12px 16px 6px; }
+  h1 { font-size:18px; margin:0; }
+  #spot { font-size:12px; color:var(--muted); margin-top:2px; }
+  nav { display:flex; gap:4px; padding:0 12px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
+  nav button { flex:1; background:none; border:0; border-bottom:2px solid transparent; padding:10px 4px; color:var(--muted); font-size:14px; }
+  nav button.active { color:var(--ink); border-bottom-color:var(--accent); font-weight:600; }
+  section { padding:12px 16px 40px; }
+  .btns { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+  button.b { padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font-size:14px; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.45; }
+  #resumeBtn { display:none; background:#e8a317; color:#000; border-color:#e8a317; }
+  #status { font-weight:600; margin:8px 0; min-height:1.4em; }
+  #log { font:12px/1.35 ui-monospace, monospace; color:var(--muted); max-height:50vh; overflow:auto; border-top:1px solid var(--line); padding-top:6px; }
+  .log-line.ok { color:var(--pos); } .log-line.warn { color:var(--neg); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:10px 0; }
+  .row { display:flex; gap:8px; align-items:center; font-size:12px; }
+  .badge { font-weight:700; padding:2px 7px; border-radius:6px; background:var(--line); }
+  .badge.s10, .badge.s9 { background:var(--pos); color:#fff; }
+  .metal.gold { color:var(--gold); font-weight:600; } .metal.silver { color:var(--silver); font-weight:600; }
+  .src { color:var(--muted); flex:1; }
+  .pos { color:var(--pos); font-weight:700; } .neg { color:var(--neg); font-weight:700; } .muted { color:var(--muted); }
+  .title { font-weight:600; margin:6px 0 2px; }
+  .nums { font-size:13px; } .why, .meta { font-size:12px; color:var(--muted); margin-top:3px; }
+  button.link { margin-top:8px; padding:8px 12px; border-radius:8px; border:1px solid var(--accent); background:none; color:var(--accent); font-size:14px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+  input[type=text], input[type=number], input[type=password], textarea { width:100%; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font-size:14px; }
+  textarea { min-height:140px; font-family:ui-monospace, monospace; font-size:12px; }
+  .check { display:flex; gap:8px; align-items:center; margin-top:10px; color:var(--ink); font-size:14px; }
+  .hint { font-size:12px; color:var(--muted); }
+  #count { font-weight:700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Edelmetall-Scanner</h1>
+  <div id="spot">Spotpreis wird beim Start geladen</div>
+</header>
+<nav>
+  <button id="nav_search" class="active" onclick="App.showTab('search')">Suche</button>
+  <button id="nav_results" onclick="App.showTab('results')">Treffer (<span id="count">0</span>)</button>
+  <button id="nav_settings" onclick="App.showTab('settings')">Einstellungen</button>
+</nav>
+
+<section id="tab_search">
+  <p class="hint">Sucht auf tutti.ch und Facebook Marketplace nach Artikeln mit echtem Gold/Silber. Zwei Agenten prüfen jedes Inserat:
+    <b>Gold-Agent</b> (Score 0–10, nur 8–10 kommen durch) und <b>Aktiv-Agent</b> (öffnet das Inserat und prüft, ob es noch läuft).
+    Sortiert nach Marge zum aktuellen Metallwert.</p>
+  <div class="btns">
+    <button class="b primary" id="startBtn" onclick="App.start()">Suche starten</button>
+    <button class="b" id="stopBtn" onclick="App.stop()">Stopp</button>
+    <button class="b" id="resumeBtn" onclick="App.resume()">Weiter</button>
+  </div>
+  <div class="btns">
+    <button class="b" onclick="App.toggleWorker()">Browser zeigen/verbergen</button>
+    <button class="b" onclick="App.fbLogin()">Facebook-Login</button>
+    <button class="b" onclick="App.openTutti()">tutti öffnen</button>
+    <button class="b" onclick="App.takeCurrentPage()">Aktuelle Browserseite übernehmen</button>
+  </div>
+  <div id="status"></div>
+  <div id="log"></div>
+</section>
+
+<section id="tab_results" style="display:none">
+  <div class="btns">
+    <button class="b primary" onclick="App.share()">Links teilen</button>
+    <button class="b" id="recheckBtn" onclick="App.recheck()">Noch aktiv? Neu prüfen</button>
+    <button class="b" onclick="App.reset()">Liste leeren</button>
+  </div>
+  <p class="hint">Metallwert = geschätztes Feingewicht × Spotpreis (ohne Schmelz-/Händlerabzug, typ. 5–15 %). Gewichte „geschätzt" sind unsicher – vor dem Kauf nachfragen.</p>
+  <div id="results"></div>
+</section>
+
+<section id="tab_settings" style="display:none">
+  <label class="check"><input type="checkbox" id="s_tuttiOn"> tutti.ch durchsuchen</label>
+  <label class="check"><input type="checkbox" id="s_fbOn"> Facebook Marketplace durchsuchen (Login nötig)</label>
+  <label>Eigene PLZ</label><input type="number" id="s_homePlz">
+  <label>Umkreis in km (tutti; Facebook nutzt den Radius in der URL)</label><input type="number" id="s_radiusKm">
+  <label>Anzahl gewünschter Links</label><input type="number" id="s_target">
+  <label>Max. Inserate öffnen (Detailprüfung)</label><input type="number" id="s_maxDetail">
+  <label>tutti: Seiten pro Suchbegriff</label><input type="number" id="s_pages">
+  <label>Facebook: Scroll-Durchgänge pro Suche</label><input type="number" id="s_fbScrolls">
+  <label>Wartezeit nach Seitenladen (ms)</label><input type="number" id="s_settleMs">
+  <label>Claude API-Key (optional – Gold-Agent mit KI statt nur Regeln)</label><input type="password" id="s_apiKey" placeholder="sk-ant-…">
+  <p class="hint">Ohne Key bewertet ein Regel-Agent (Punzen, Gewichte, Münzen, Ausschlusswörter). Mit Key bewertet zusätzlich Claude jedes aktive Inserat.</p>
+  <label>tutti Such-URL ({q} = Begriff, {p} = Seite)</label><input type="text" id="s_tuttiTemplate">
+  <p class="hint">Tipp: In tutti einen Ortsfilter (z. B. Schaffhausen + Umkreis) setzen, URL kopieren und den Suchbegriff durch {q} ersetzen.</p>
+  <label>Facebook Such-URL ({q} = Begriff)</label><input type="text" id="s_fbTemplate">
+  <p class="hint">Falls die Ortsangabe nicht greift: In Facebook Marketplace einmal Standort Schaffhausen und Umkreis einstellen – Facebook merkt sich das.</p>
+  <label>tutti Suchbegriffe (eine Zeile pro Begriff)</label><textarea id="s_tuttiQueries"></textarea>
+  <label>Facebook Suchbegriffe</label><textarea id="s_fbQueries"></textarea>
+  <div class="btns"><button class="b" onclick="App.resetDefaults()">Standardwerte</button></div>
+</section>
+
+<script src="scoring.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
