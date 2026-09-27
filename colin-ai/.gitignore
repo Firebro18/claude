@@ -4,3 +4,5 @@ local.properties
 *.jks
 *.keystore
 .idea/
+__pycache__/
+src/main/assets/models/
