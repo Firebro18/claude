@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun App(vm: ChatViewModel, shared: MutableState<String?>, speak: (String) -> Unit) {
-    var screen by rememberSaveable { mutableStateOf(if (vm.settings.apiKey.isBlank()) Screen.SETTINGS else Screen.CHAT) }
+    var screen by rememberSaveable { mutableStateOf(Screen.CHAT) }
     val context = LocalContext.current
     LaunchedEffect(vm.toast) {
         vm.toast?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); vm.toast = null }
@@ -204,7 +204,7 @@ private fun ChatScreen(vm: ChatViewModel, shared: MutableState<String?>, speak: 
         ) { pad ->
             val messages = vm.current.messages
             if (messages.isEmpty()) {
-                Welcome(Modifier.padding(pad), vm.settings.userName) { vm.send(it) }
+                Welcome(Modifier.padding(pad), vm.settings.userName, vm.settings.brain) { vm.send(it) }
             } else {
                 val list = rememberLazyListState()
                 LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
@@ -221,7 +221,7 @@ private fun ChatScreen(vm: ChatViewModel, shared: MutableState<String?>, speak: 
                         MessageRow(
                             m = m,
                             status = if (last && vm.busy) vm.status else null,
-                            showThinking = vm.settings.showThinking,
+                            generating = last && vm.busy,
                             onSpeak = speak,
                             onRetry = if (last && m.role == Role.ASSISTANT && !vm.busy) vm::retry else null,
                         )
@@ -233,7 +233,7 @@ private fun ChatScreen(vm: ChatViewModel, shared: MutableState<String?>, speak: 
 }
 
 @Composable
-private fun Welcome(modifier: Modifier, name: String, onPick: (String) -> Unit) {
+private fun Welcome(modifier: Modifier, name: String, brain: Brain, onPick: (String) -> Unit) {
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -244,15 +244,15 @@ private fun Welcome(modifier: Modifier, name: String, onPick: (String) -> Unit) 
             contentAlignment = Alignment.Center,
         ) { Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(48.dp)) }
         Spacer(Modifier.height(12.dp))
-        Text("Hey ${name.ifBlank { "there" }}, I'm Colin AI.", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("Ask me anything. I can search the web and I remember what you teach me.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        Text("Hey ${name.ifBlank { "there" }}, I'm ${brain.label}.", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(
+            "I run 100% offline on your phone. Nothing you type leaves this device.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp),
+        )
         Spacer(Modifier.height(24.dp))
-        listOf(
-            "What's happening in the news today?",
-            "Help me plan my week",
-            "Explain how gold prices are set, simply",
-            "Remember that I like short answers",
-        ).forEach {
+        (if (brain == Brain.MINI) listOf("Tell me a story.", "Who are you?", "hi, how are you?")
+        else listOf("Who are you?", "Give me 3 tips to sleep better", "Erklär mir, warum der Himmel blau ist", "Remember that I like short answers"))
+            .forEach {
             OutlinedCard(onClick = { onPick(it) }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                 Text(it, modifier = Modifier.padding(14.dp))
             }
@@ -261,10 +261,9 @@ private fun Welcome(modifier: Modifier, name: String, onPick: (String) -> Unit) 
 }
 
 @Composable
-private fun MessageRow(m: ChatMessage, status: String?, showThinking: Boolean, onSpeak: (String) -> Unit, onRetry: (() -> Unit)?) {
+private fun MessageRow(m: ChatMessage, status: String?, generating: Boolean, onSpeak: (String) -> Unit, onRetry: (() -> Unit)?) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    val uri = LocalUriHandler.current
     if (m.role == Role.USER) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             Surface(
@@ -276,22 +275,6 @@ private fun MessageRow(m: ChatMessage, status: String?, showThinking: Boolean, o
         return
     }
     Column(Modifier.fillMaxWidth()) {
-        if (showThinking && m.thinking.isNotBlank()) {
-            var open by remember { mutableStateOf(false) }
-            Row(
-                Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = !open }.padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Default.Lightbulb, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
-                Text(if (open) " Hide reasoning" else " Show reasoning", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            AnimatedVisibility(open) {
-                Text(
-                    m.thinking.trim(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp, bottom = 6.dp),
-                )
-            }
-        }
         if (status != null) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
@@ -304,17 +287,7 @@ private fun MessageRow(m: ChatMessage, status: String?, showThinking: Boolean, o
                 if (m.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
             )
         }
-        if (m.sources.isNotEmpty() && status == null) {
-            Text("Sources", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
-            m.sources.take(5).forEach { s ->
-                Text(
-                    "↗ " + s.title.ifBlank { s.url },
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable { runCatching { uri.openUri(s.url) } }.padding(vertical = 2.dp),
-                )
-            }
-        }
-        if (m.text.isNotEmpty() && status == null) {
+        if (m.text.isNotEmpty() && !generating) {
             Row {
                 IconButton(onClick = {
                     scope.launch { clipboard.setClipEntry(androidx.compose.ui.platform.ClipEntry(ClipData.newPlainText("Colin AI", m.text))) }
@@ -386,7 +359,7 @@ private fun TrainingScreen(vm: ChatViewModel, onBack: () -> Unit) {
     var confirmClear by remember { mutableStateOf(false) }
     SubScreen("Training & memory", onBack) {
         Text(
-            "This is how you train Colin AI. Custom instructions shape how it behaves; memories are facts it knows about you in every chat. It also learns on its own when you tell it things about yourself.",
+            "Teach Colin AI about you. Memories and instructions are given to the main brain in every chat. Say \"remember that…\" in a chat and it saves the fact here automatically.",
             color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium,
         )
         Text("Custom instructions", style = MaterialTheme.typography.titleMedium)
@@ -433,30 +406,13 @@ private fun TrainingScreen(vm: ChatViewModel, onBack: () -> Unit) {
 @Composable
 private fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
     var s by remember { mutableStateOf(vm.settings) }
-    var showKey by remember { mutableStateOf(false) }
-    val uri = LocalUriHandler.current
     fun save(n: Settings) { s = n; vm.updateSettings(n) }
     SubScreen("Settings", onBack) {
-        Text("Anthropic API key", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Colin AI thinks using Anthropic's Claude models, so it needs your own API key. It's stored encrypted on this phone only.",
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedTextField(
-            value = s.apiKey,
-            onValueChange = { save(s.copy(apiKey = it.trim())) },
-            placeholder = { Text("sk-ant-…") },
-            singleLine = true,
-            visualTransformation = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, null) } },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        TextButton(onClick = { uri.openUri("https://console.anthropic.com/settings/keys") }) { Text("Get an API key →") }
-
         Text("Your name", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(s.userName, { save(s.copy(userName = it)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
         Text("Brain", style = MaterialTheme.typography.titleMedium)
+        Text("Both brains live inside the app and run offline.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Brain.entries.forEach { b ->
             Row(Modifier.fillMaxWidth().clickable { save(s.copy(brain = b)) }, verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(selected = s.brain == b, onClick = { save(s.copy(brain = b)) })
@@ -467,20 +423,22 @@ private fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             }
         }
 
-        Text("Effort", style = MaterialTheme.typography.titleMedium)
-        Text("How hard Colin AI thinks before answering. Higher is smarter but slower and costs more.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Creativity", style = MaterialTheme.typography.titleMedium)
+        Text("Precise gives steadier answers, Creative gives more varied ones.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScrollSafe()) {
-            Effort.entries.forEach { e ->
-                FilterChip(selected = s.effort == e, onClick = { save(s.copy(effort = e)) }, label = { Text(e.label, fontSize = 13.sp) })
+            Creativity.entries.forEach { c ->
+                FilterChip(selected = s.creativity == c, onClick = { save(s.copy(creativity = c)) }, label = { Text(c.label, fontSize = 13.sp) })
             }
         }
 
-        ToggleRow("Web search", "Look things up live for current info", s.webSearch) { save(s.copy(webSearch = it)) }
-        ToggleRow("Learn automatically", "Save facts you share to memory", s.autoMemory) { save(s.copy(autoMemory = it)) }
-        ToggleRow("Show reasoning", "Let you peek at how it thought", s.showThinking) { save(s.copy(showThinking = it)) }
+        ToggleRow("Learn automatically", "Save things you ask it to remember (\"remember that…\", \"merk dir…\")", s.autoMemory) { save(s.copy(autoMemory = it)) }
 
         Spacer(Modifier.height(8.dp))
-        Button(onClick = onBack, enabled = s.apiKey.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Start chatting") }
+        Text(
+            "Colin AI runs on a model trained from Qwen2.5-0.5B-Instruct (Apache 2.0). Colin Mini was trained from scratch. " +
+                "Inference by llama.cpp (MIT). Small offline models make mistakes, so double-check important facts.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

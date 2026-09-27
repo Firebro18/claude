@@ -1,9 +1,6 @@
 package ai.colin.app
 
 import android.content.Context
-import android.content.SharedPreferences
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -14,12 +11,8 @@ enum class Role { USER, ASSISTANT }
 data class ChatMessage(
     val role: Role,
     val text: String,
-    val thinking: String = "",
-    val sources: List<Source> = emptyList(),
     val isError: Boolean = false,
 )
-
-data class Source(val title: String, val url: String)
 
 data class Conversation(
     val id: String = UUID.randomUUID().toString(),
@@ -28,56 +21,60 @@ data class Conversation(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
-/** A model Colin AI can think with. Only models that support adaptive thinking, effort and the latest web search tool. */
-enum class Brain(val id: String, val label: String, val blurb: String) {
-    OPUS("claude-opus-5", "Colin Pro", "Smart and balanced (recommended)"),
-    FABLE("claude-fable-5-1", "Colin Ultra", "Maximum intelligence, slower and pricier"),
-    SONNET("claude-sonnet-5", "Colin Fast", "Quick and cheap for everyday questions"),
+/** The two offline brains shipped inside the app (GGUF files in assets/models). */
+enum class Brain(
+    val file: String,
+    val label: String,
+    val blurb: String,
+    val contextTokens: Int,
+    val historyChars: Int,
+    val maxReplyTokens: Int,
+    val system: String,
+) {
+    COLIN(
+        "colin-ai.gguf", "Colin AI",
+        "Main brain. An open model (Qwen2.5 0.5B) that was trained to be Colin AI.",
+        contextTokens = 4096, historyChars = 6000, maxReplyTokens = 768,
+        system = "You are Colin AI, a personal AI assistant made for Colin. You run fully offline on his phone. " +
+            "Be direct, warm, honest and helpful. Answer in the language the user writes in.",
+    ),
+    MINI(
+        "colin-mini.gguf", "Colin Mini",
+        "Experimental. A tiny brain trained 100% from scratch. Good at simple chats and short stories.",
+        contextTokens = 512, historyChars = 700, maxReplyTokens = 200,
+        system = "You are Colin Mini, a tiny AI made for Colin.",
+    ),
 }
 
-enum class Effort(val label: String) { LOW("Low"), MEDIUM("Medium"), HIGH("High"), XHIGH("Extra high"), MAX("Max") }
+enum class Creativity(val label: String, val temperature: Float) {
+    PRECISE("Precise", 0.2f), BALANCED("Balanced", 0.6f), CREATIVE("Creative", 0.9f)
+}
 
 data class Settings(
-    val apiKey: String = "",
-    val brain: Brain = Brain.OPUS,
-    val effort: Effort = Effort.HIGH,
-    val webSearch: Boolean = true,
+    val brain: Brain = Brain.COLIN,
+    val creativity: Creativity = Creativity.BALANCED,
     val autoMemory: Boolean = true,
-    val showThinking: Boolean = true,
     val instructions: String = "",
     val userName: String = "Colin",
 )
 
 class Store(context: Context) {
-    private val secure: SharedPreferences = EncryptedSharedPreferences.create(
-        context,
-        "colin_secure",
-        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
     private val prefs = context.getSharedPreferences("colin", Context.MODE_PRIVATE)
     private val chatsDir = File(context.filesDir, "chats").apply { mkdirs() }
 
     fun loadSettings() = Settings(
-        apiKey = secure.getString("api_key", "") ?: "",
-        brain = runCatching { Brain.valueOf(prefs.getString("brain", "")!!) }.getOrDefault(Brain.OPUS),
-        effort = runCatching { Effort.valueOf(prefs.getString("effort", "")!!) }.getOrDefault(Effort.HIGH),
-        webSearch = prefs.getBoolean("web_search", true),
+        brain = runCatching { Brain.valueOf(prefs.getString("brain", "")!!) }.getOrDefault(Brain.COLIN),
+        creativity = runCatching { Creativity.valueOf(prefs.getString("creativity", "")!!) }.getOrDefault(Creativity.BALANCED),
         autoMemory = prefs.getBoolean("auto_memory", true),
-        showThinking = prefs.getBoolean("show_thinking", true),
         instructions = prefs.getString("instructions", "") ?: "",
         userName = prefs.getString("user_name", "Colin") ?: "Colin",
     )
 
     fun saveSettings(s: Settings) {
-        secure.edit().putString("api_key", s.apiKey.trim()).apply()
         prefs.edit()
             .putString("brain", s.brain.name)
-            .putString("effort", s.effort.name)
-            .putBoolean("web_search", s.webSearch)
+            .putString("creativity", s.creativity.name)
             .putBoolean("auto_memory", s.autoMemory)
-            .putBoolean("show_thinking", s.showThinking)
             .putString("instructions", s.instructions)
             .putString("user_name", s.userName)
             .apply()
@@ -112,15 +109,7 @@ class Store(context: Context) {
         put("updatedAt", c.updatedAt)
         put("messages", JSONArray().apply {
             c.messages.forEach { m ->
-                put(JSONObject().apply {
-                    put("role", m.role.name)
-                    put("text", m.text)
-                    put("thinking", m.thinking)
-                    put("isError", m.isError)
-                    put("sources", JSONArray().apply {
-                        m.sources.forEach { s -> put(JSONObject().put("title", s.title).put("url", s.url)) }
-                    })
-                })
+                put(JSONObject().put("role", m.role.name).put("text", m.text).put("isError", m.isError))
             }
         })
     }
@@ -133,16 +122,7 @@ class Store(context: Context) {
             updatedAt = o.optLong("updatedAt"),
             messages = List(msgs.length()) { i ->
                 val m = msgs.getJSONObject(i)
-                val src = m.optJSONArray("sources") ?: JSONArray()
-                ChatMessage(
-                    role = Role.valueOf(m.getString("role")),
-                    text = m.getString("text"),
-                    thinking = m.optString("thinking"),
-                    isError = m.optBoolean("isError"),
-                    sources = List(src.length()) { j ->
-                        src.getJSONObject(j).let { Source(it.getString("title"), it.getString("url")) }
-                    },
-                )
+                ChatMessage(Role.valueOf(m.getString("role")), m.getString("text"), m.optBoolean("isError"))
             },
         )
     }
