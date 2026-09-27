@@ -1,37 +1,55 @@
 # Colin AI
 
-Colin's own AI assistant for Android.
+Colin's own AI for Android. It runs **100% offline on the phone**: no cloud AI, no API key, no internet
+permission. Nothing typed into it ever leaves the device.
 
-**Install:** download [`ColinAI.apk`](../ColinAI.apk), open it on your phone, allow "install unknown apps" when asked.
-On first launch, paste an Anthropic API key (get one at https://console.anthropic.com/settings/keys).
+The app ships with two brains, both trained in this repo:
 
-## What it does
+| Brain | What it is | Size |
+|---|---|---|
+| **Colin AI** (main) | [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) (Apache-2.0), fine-tuned with LoRA into Colin AI: its own name, identity, personality and style, in English and German. | ~380 MB (Q4_K_M) |
+| **Colin Mini** (experimental) | A brand-new 17M-parameter Llama-style network, trained **from scratch** (random weights) on simple chats, short stories and Colin's identity data. Only the tokenizer is borrowed from SmolLM2. | ~20 MB (Q8_0) |
 
-- **Three brains:** Colin Pro (Claude Opus 5, default), Colin Ultra (Claude Fable 5.1, the most capable), Colin Fast (Claude Sonnet 5).
-- **Adjustable effort:** from Low to Max, depending on how hard it should think.
-- **Live web search** with clickable sources.
-- **Learns about you:** saves lasting facts to long-term memory on its own and uses them in every chat.
-- **Training screen:** add or delete memories and write custom instructions that shape its behaviour.
-- **Voice:** speak your question and have answers read aloud.
-- **Show reasoning:** peek at a summary of how it thought.
-- Chat history, retry, copy, Markdown formatting, and sharing text from other apps into Colin AI.
-- Your API key is stored encrypted on the phone. Chats and memory never leave the device except when sent to Anthropic to get a reply.
+Honest limits: these are small models. Colin AI can chat, explain, translate, summarize and brainstorm,
+but it makes mistakes and knows nothing after its training data. Colin Mini is a demo of an AI grown from
+nothing: it can greet you and tell simple stories, but it often talks nonsense.
 
-## Build it yourself
+## App features
 
-Requires JDK 17+ and the Android SDK (platform 36).
+- Pick the brain in Settings; set creativity (Precise / Balanced / Creative).
+- **Training & memory** screen: teach it facts about you and write custom instructions. Say "remember that…" or
+  "merk dir…" in a chat and it saves the fact automatically.
+- Voice input, read-aloud, chat history, retry, copy, share text into the app.
 
-```bash
-cd colin-ai
-./gradlew assembleRelease        # APK -> app/build/outputs/apk/release/app-release.apk
-./gradlew testReleaseUnitTest    # runs the brain loop against a mock API server
+## How it's built
+
+```
+training/colin_data.py     Colin's identity + style dataset (EN/DE)
+training/finetune.py       LoRA fine-tune Qwen2.5-0.5B-Instruct -> Colin AI (CPU, ~1 h)
+training/train_mini.py     Train Colin Mini from scratch (CPU, time-boxed)
+training/build_models.sh   HF checkpoints -> quantized GGUF in app/src/main/assets/models
+app/src/main/cpp/          On-device engine: llama.cpp (submodule) + C++/JNI wrapper
+app/src/main/java/...      Kotlin + Jetpack Compose app
 ```
 
-## Where things live
+Rebuild everything:
 
-| File | Purpose |
-|---|---|
-| `app/src/main/java/ai/colin/app/ColinBrain.kt` | Colin AI's personality prompt, and the Claude API loop (streaming, web search, memory tool) |
-| `app/src/main/java/ai/colin/app/ChatViewModel.kt` | App state: chats, memory, settings |
-| `app/src/main/java/ai/colin/app/MainActivity.kt` | UI: chat, Training, and Settings screens |
-| `app/src/main/java/ai/colin/app/Store.kt` | On-device storage |
+```bash
+git submodule update --init
+pip install torch transformers peft datasets gguf
+cd colin-ai/training
+python finetune.py --out /tmp/colin-ai-hf
+python train_mini.py prep  --work /tmp/mini
+python train_mini.py train --work /tmp/mini --minutes 100
+./build_models.sh /tmp/colin-ai-hf /tmp/mini/colin-mini-hf
+cd .. && ./gradlew assembleRelease    # needs Android SDK 36, NDK 27, CMake 3.31
+```
+
+The GGUF model files are git-ignored (too large for GitHub), so the APK is attached to the chat/release instead.
+
+Test the engine on a desktop without a phone:
+
+```bash
+cmake -S app/src/main/cpp -B /tmp/host && cmake --build /tmp/host -j
+/tmp/host/colin_cli app/src/main/assets/models/colin-ai.gguf "Who are you?" "Wer hat dich gemacht?"
+```
