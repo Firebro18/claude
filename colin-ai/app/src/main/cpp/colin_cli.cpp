@@ -1,5 +1,6 @@
 // Desktop test harness for the engine: colin_cli model.gguf "question" ["question 2" ...]
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 
 #include "colin_engine.h"
@@ -9,7 +10,7 @@ int main(int argc, char** argv) {
     colin::Engine e;
     std::string err = e.load(argv[1], 2048, 4);
     if (!err.empty()) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
-    std::vector<colin::Message> chat = {{"system", "You are Colin AI, a personal AI assistant made for Colin. You run fully offline on his phone. Be direct, warm, honest and helpful. Answer in the language the user writes in."}};
+    std::vector<colin::Message> chat = {{"system", argc > 0 && std::getenv("COLIN_SYSTEM") ? std::getenv("COLIN_SYSTEM") : "You are Colin AI, a personal AI assistant made for Colin. You run fully offline on his phone. Be direct, warm, honest and helpful. Answer in the language the user writes in."}};
     for (int i = 2; i < argc; ++i) {
         chat.push_back({"user", argv[i]});
         std::cout << "\n>>> " << argv[i] << "\n";
