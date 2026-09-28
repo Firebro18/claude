@@ -5,5 +5,5 @@ local.properties
 *.keystore
 .idea/
 __pycache__/
-app/src/main/assets/models/
+app/src/main/assets/models/colin-ai.gguf
 .cxx/

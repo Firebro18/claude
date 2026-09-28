@@ -1,0 +1,59 @@
+name: Build Colin AI APK
+
+on:
+  push:
+    branches: [claude/colin-ai-custom-build-mtrm1t, main, master]
+    paths: ["colin-ai/**", ".github/workflows/colin-ai-apk.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Android NDK and CMake
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" "cmake;3.31.6" "platforms;android-36" > /dev/null
+
+      - name: Install Python tools
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install "transformers<5" peft safetensors sentencepiece gguf numpy protobuf
+
+      - name: Rebuild Colin AI brain (base model + trained adapter)
+        working-directory: colin-ai
+        run: |
+          python training/merge_adapter.py training/colin-ai-adapter /tmp/colin-ai-hf
+          python app/src/main/cpp/llama.cpp/convert_hf_to_gguf.py /tmp/colin-ai-hf --outtype f16 --outfile /tmp/colin-ai-f16.gguf
+          cmake -S app/src/main/cpp/llama.cpp -B /tmp/quant -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF
+          cmake --build /tmp/quant --target llama-quantize -j"$(nproc)"
+          /tmp/quant/bin/llama-quantize /tmp/colin-ai-f16.gguf app/src/main/assets/models/colin-ai.gguf Q4_K_M
+          ls -lh app/src/main/assets/models
+
+      - name: Build APK
+        working-directory: colin-ai
+        run: ./gradlew assembleRelease --no-daemon && cp app/build/outputs/apk/release/app-release.apk /tmp/ColinAI.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="colin-ai-${{ github.run_number }}"
+          gh release create "$tag" /tmp/ColinAI.apk --target "${{ github.sha }}" --title "Colin AI (build ${{ github.run_number }})" \
+            --notes "Fully offline Colin AI for Android. Download ColinAI.apk on your phone and open it to install."
