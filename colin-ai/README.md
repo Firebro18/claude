@@ -8,7 +8,7 @@ The app ships with two brains, both trained in this repo:
 | Brain | What it is | Size |
 |---|---|---|
 | **Colin AI** (main) | [Qwen2.5-0.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct) (Apache-2.0), fine-tuned with LoRA into Colin AI: its own name, identity, personality and style, in English and German. | ~380 MB (Q4_K_M) |
-| **Colin Mini** (experimental) | A brand-new 17M-parameter Llama-style network, trained **from scratch** (random weights) on simple chats, short stories and Colin's identity data. Only the tokenizer is borrowed from SmolLM2. | ~20 MB (Q8_0) |
+| **Colin Mini** (experimental) | A brand-new 17M-parameter Llama-style network, trained **from scratch** (random weights) for ~4 hours on CPU (22M tokens) on simple chats, short stories and Colin's identity data. Only the tokenizer is borrowed from SmolLM2. | ~20 MB (Q8_0) |
 
 Honest limits: these are small models. Colin AI can chat, explain, translate, summarize and brainstorm,
 but it makes mistakes and knows nothing after its training data. Colin Mini is a demo of an AI grown from
@@ -45,7 +45,7 @@ python train_mini.py train --work /tmp/mini --minutes 100
 cd .. && ./gradlew assembleRelease    # needs Android SDK 36, NDK 27, CMake 3.31
 ```
 
-The GGUF model files are git-ignored (too large for GitHub), so the APK is attached to the chat/release instead.
+Colin AI itself is stored as a 17 MB LoRA adapter (`training/colin-ai-adapter`); GitHub Actions rebuilds the full model from it, builds the APK and publishes it on the Releases page (`.github/workflows/colin-ai-apk.yml`).
 
 Test the engine on a desktop without a phone:
 

@@ -91,6 +91,20 @@ def prep():
     print(f"{len(texts)} documents, {len(arr):,} tokens")
 
 
+def save(model, out, seen, step, prev):
+    """Checkpoint atomically so a container restart never loses more than a few minutes."""
+    tmp = out + ".tmp"
+    model.save_pretrained(tmp, safe_serialization=True)
+    tok.save_pretrained(tmp)
+    json.dump({"tokens_seen": seen + prev.get("tokens_seen", 0), "steps": step + prev.get("steps", 0)},
+              open(os.path.join(tmp, "training_stats.json"), "w"))
+    if os.path.exists(out):
+        os.rename(out, out + ".old")
+    os.rename(tmp, out)
+    import shutil
+    shutil.rmtree(out + ".old", ignore_errors=True)
+
+
 def train():
     torch.manual_seed(0)
     data = np.fromfile(os.path.join(args.work, "corpus.bin"), dtype=np.uint16)
@@ -145,6 +159,8 @@ def train():
         opt.zero_grad(set_to_none=True)
         step += 1
         seen += x.numel()
+        if step % 300 == 0:
+            save(model, out, seen, step, prev)
         if step % 100 == 0:
             el = time.time() - t0
             msg = f"step {step} loss {loss.item():.3f} lr {lr:.1e} {seen / el:,.0f} tok/s {el / 60:.1f}min"
@@ -153,9 +169,7 @@ def train():
             print(msg, flush=True)
 
     print(f"done: {step} steps, {seen:,} tokens seen, val loss {val_loss():.3f}")
-    model.save_pretrained(out, safe_serialization=True)
-    tok.save_pretrained(out)
-    json.dump({"tokens_seen": seen + prev.get("tokens_seen", 0), "steps": step + prev.get("steps", 0)}, open(os.path.join(out, "training_stats.json"), "w"))
+    save(model, out, seen, step, prev)
 
     model.eval()
     for q in ["Who are you?", "Tell me a story.", "hi, how are you?", "What is the capital of France?"]:
