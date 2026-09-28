@@ -28,6 +28,8 @@ p.add_argument("--work", required=True)
 p.add_argument("--minutes", type=float, default=90)
 p.add_argument("--stories", type=int, default=60000)
 p.add_argument("--chats", type=int, default=40000)
+p.add_argument("--resume", action="store_true", help="continue from work/colin-mini-hf")
+p.add_argument("--lr", type=float, default=2e-3)
 args = p.parse_args()
 os.makedirs(args.work, exist_ok=True)
 
@@ -100,12 +102,18 @@ def train():
         tie_word_embeddings=True, rope_theta=10000.0, rms_norm_eps=1e-5,
         bos_token_id=tok.bos_token_id, eos_token_id=tok.convert_tokens_to_ids("<|im_end|>"),
     )
-    model = LlamaForCausalLM(cfg)  # random weights: nothing pre-trained
+    out = os.path.join(args.work, "colin-mini-hf")
+    prev = {}
+    if args.resume:
+        model = LlamaForCausalLM.from_pretrained(out)
+        prev = json.load(open(os.path.join(out, "training_stats.json")))
+    else:
+        model = LlamaForCausalLM(cfg)  # random weights: nothing pre-trained
     print(f"Colin Mini: {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M parameters, "
           f"{len(train_data):,} training tokens")
 
     batch = 16
-    opt = torch.optim.AdamW(model.parameters(), lr=2e-3, betas=(0.9, 0.95), weight_decay=0.1)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.1)
     budget = args.minutes * 60
     rng = np.random.default_rng(0)
 
@@ -126,7 +134,7 @@ def train():
     model.train()
     while time.time() - t0 < budget:
         frac = (time.time() - t0) / budget
-        lr = 2e-3 * min(1.0, (step + 1) / 200) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * frac)))
+        lr = args.lr * min(1.0, (step + 1) / 200) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * frac)))
         for g in opt.param_groups:
             g["lr"] = lr
         x, _ = get_batch(train_data)
@@ -145,17 +153,16 @@ def train():
             print(msg, flush=True)
 
     print(f"done: {step} steps, {seen:,} tokens seen, val loss {val_loss():.3f}")
-    out = os.path.join(args.work, "colin-mini-hf")
     model.save_pretrained(out, safe_serialization=True)
     tok.save_pretrained(out)
-    json.dump({"tokens_seen": seen, "steps": step}, open(os.path.join(out, "training_stats.json"), "w"))
+    json.dump({"tokens_seen": seen + prev.get("tokens_seen", 0), "steps": step + prev.get("steps", 0)}, open(os.path.join(out, "training_stats.json"), "w"))
 
     model.eval()
     for q in ["Who are you?", "Tell me a story.", "hi, how are you?", "What is the capital of France?"]:
         prompt = tok.apply_chat_template([{"role": "system", "content": MINI_SYSTEM}, {"role": "user", "content": q}],
                                          add_generation_prompt=True, return_tensors="pt")
         y = model.generate(prompt, max_new_tokens=100, do_sample=True, temperature=0.7, top_k=40,
-                           eos_token_id=cfg.eos_token_id, pad_token_id=cfg.eos_token_id)
+                           eos_token_id=model.config.eos_token_id, pad_token_id=model.config.eos_token_id)
         print(f"\n>>> {q}\n{tok.decode(y[0][prompt.shape[1]:], skip_special_tokens=True)}", flush=True)
 
 
